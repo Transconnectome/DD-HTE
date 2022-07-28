@@ -6,7 +6,7 @@ date: '2022-06-13'
 
 ```{r}
 rm(list=ls())
-dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_imp dataset.csv", header=TRUE)
+dd_data<-read.csv("~.csv", header=TRUE)
 
 dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
       'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
@@ -133,7 +133,7 @@ res_spls_ci<-as.data.frame(cis)
 
 colnames(res_spls)<-c("Total Score PLEs (1-year)", "Total Score PLEs (2-year)", "Distress Score PLEs (1-year)", "Distress Score PLEs (2-year)")
 colnames(res_spls_ci)<-c("95% CI: Low", "95% CI: High")
-openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD DD SPLS_results.xlsx")
+openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "~ABCD DD SPLS_results.xlsx")
 
 ```
 
@@ -273,7 +273,7 @@ res_spls_ci<-as.data.frame(cis)
 
 colnames(res_spls)<-c("Delay Discounting (1-year)")
 colnames(res_spls_ci)<-c("95% CI: Low", "95% CI: High")
-openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD DD SPLS_results2.xlsx")
+openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "~ABCD DD SPLS_results2.xlsx")
 
 ```
 
@@ -344,7 +344,7 @@ rownames(res_all)<-c('Delay Discounting', 'Total PLEs (1-year)', 'Total PLEs (2-
 print(res_all)
 
 
-write.csv(res_all, "C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD DD IV Regression_results.csv")
+write.csv(res_all, "~ABCD DD IV Regression_results.csv")
 
 ```
 
@@ -397,25 +397,8 @@ colnames(res_all)<-c("Estimates", "Std.Err", "95% Lower CI", "95% Upper CI", "P-
 rownames(res_all)<-outcomes
 print(res_all)
 
-write.csv(res_all, "C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD DD IV Regression_KSADS results.csv")
+write.csv(res_all, "~ABCD DD IV Regression_KSADS results.csv")
 
 
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
