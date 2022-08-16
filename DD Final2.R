@@ -4,7 +4,7 @@ output: html_document
 date: '2022-06-13'
 ---
 
-```{r}
+
 rm(list=ls())
 dd_data<-read.csv("~.csv", header=TRUE)
 
@@ -93,17 +93,12 @@ data$religion_prefer_0y<-as.factor(data$religion_prefer_0y)
 
 
 library(fastDummies)
-
 data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'gender_identity_0y', 'religion_prefer_0y',
                                           'gay_parent_0y', 'gay_youth_0y', 'race_ethnicity_0y', 'foreign_born_family_0y', 'foreign_born_0y'))
 
-```
 
 
 
-
-
-```{r SPLS PRS variable selection: PLEs}
 ############################ SPLS PRS Variable Selection: PLEs ######################
 library(spls)
 gps_list<-c('cpeur2', 'eaeur1', 'mddeur6', 'depmulti', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
@@ -135,10 +130,8 @@ colnames(res_spls)<-c("Total Score PLEs (1-year)", "Total Score PLEs (2-year)", 
 colnames(res_spls_ci)<-c("95% CI: Low", "95% CI: High")
 openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "~ABCD DD SPLS_results.xlsx")
 
-```
 
 
-```{r SPLS PRS variable selection: DD}
 ############################ SPLS PRS Variable Selection: DD ######################
 library(spls)
 gps_list<-c('cpeur2', 'eaeur1', 'mddeur6', 'depmulti', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
