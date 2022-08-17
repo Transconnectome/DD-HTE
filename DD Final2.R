@@ -116,6 +116,10 @@ set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind 
 invisible(capture.output(cv<-cv.spls(GPS, PLE, eta = seq(0, 0.999, 0.001), K = c(1: 10))))
 fit<-spls(GPS, PLE, eta = cv$eta.opt, K = cv$K.opt)
 print(fit)
+
+coef<-coefplot.spls(fit)
+print(coef)
+
 ci.f <- ci.spls(fit, B=5000, plot.it=TRUE, plot.fix="x")
 cf <- correct.spls(ci.f, plot.it=TRUE)
 print(cf)
@@ -151,6 +155,7 @@ fit<-spls(GPS, DD, eta = cv$eta.opt, K = cv$K.opt)
 print(fit)
 
 
+library(pls)
 "ci.spls_y1" <-
 function( object, coverage=0.95, B=1000,
         plot.it=FALSE, plot.fix='y', plot.var=NA,
@@ -268,12 +273,11 @@ colnames(res_spls)<-c("Delay Discounting (1-year)")
 colnames(res_spls_ci)<-c("95% CI: Low", "95% CI: High")
 openxlsx::write.xlsx(list(sheet1=res_spls, sheet2=res_spls_ci), rowNames=TRUE, "~ABCD DD SPLS_results2.xlsx")
 
-```
 
 
 
 
-```{r IV Regression}
+################### IV Regression: Main Analysis #####################
 library(ivreg)
 
 outcomes<-c('totalscore_pps_1y_z', 'totalscore_pps_2y_z', 'distress_score_pps_1y_z', 'distress_score_pps_2y_z')
@@ -339,11 +343,10 @@ print(res_all)
 
 write.csv(res_all, "~ABCD DD IV Regression_results.csv")
 
-```
 
 
 
-```{r IV Regression}
+################### IV Regression: KSADS #####################
 library(ivreg)
 
 outcomes<-c('KSADS_BD_y_2y_z', 'KSADS_Anx_y_2y_z', 'KSADS_Eat_y_2y_z',
@@ -393,5 +396,4 @@ print(res_all)
 write.csv(res_all, "~ABCD DD IV Regression_KSADS results.csv")
 
 
-```
 
