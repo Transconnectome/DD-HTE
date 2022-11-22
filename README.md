@@ -5,12 +5,18 @@ This contains codes used for [Heterogeneity in the Causal Effects of Neighborhoo
 All analyses were conducted in R version 4.1.2.
 
 
-## DD Final2.Rmd
-1) Variable selection for Polygenic Risk Scores (PRS) using Sparse Partial Least Squares (SPLS)
-2) Conventional Linear Instrumental Variable regression (IV regression)
+## DD Var Select
+Variable selection for Polygenic Risk Scores (PRS), Structural MRI, and MID Task fMRI using Boruta
 
 
-## DD GRF.Rmd
-1) Average Treatment Effects using Instrumental Random Forests (grf)
-2) Heterogeneity assessment using Rank-weighted Average Treatment Effects (grf)
+## DD IV Regression.Rmd
+Conventional Linear Instrumental Variable regression (IV regression)
+
+
+## DD GRF ATE.Rmd
+Average Treatment Effects using Instrumental Random Forests (grf)
+
+
+## DD GRF RATE.Rmd
+Heterogeneity assessment using Rank-weighted Average Treatment Effects (grf)
 
