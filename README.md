@@ -16,7 +16,8 @@ Kursa, M. B., & Rudnicki, W. R. (2010). Feature Selection with the Boruta Packag
 Conventional Linear Instrumental Variable regression (IV regression)
 
 ### Reference
-Angrist, J. D., Imbens, G. W., & Rubin, D. B. (1996). Identification of Causal Effects Using Instrumental Variables. Journal of the American Statistical Association, 91(434), 444-455. doi:10.1080/01621459.1996.10476902 
+Angrist, J. D., Imbens, G. W., & Rubin, D. B. (1996). Identification of Causal Effects Using Instrumental Variables. Journal of the American Statistical Association, 91(434), 444-455. doi:10.1080/01621459.1996.10476902
+
 John Fox, Christian Kleiber, Achim Zeileis, Nikolas Kuschnig (2022). ivreg: Instrumental-Variables Regression by '2SLS', '2SM', or '2SMM', with Diagnostics. Version 0.6-1, URL: https://john-d-fox.github.io/ivreg/
 
 
