@@ -1,0 +1,3604 @@
+---
+title: "DD GRF ATE"
+author: "PJH"
+date: '2022-11-21'
+output: html_document
+---
+
+```{r ATE No Brain: DD 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Discounting 1 year ###################################
+
+Y <- data[, 'discount_rate_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 4000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'discount_rate_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+
+
+```{r ATE No Brain: Total 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Total Score PLEs 1 year ###################################
+
+Y <- data[, 'totalscore_pps_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 3000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 2000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 2000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'totalscore_pps_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+```{r Importance No Brain: Total 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y', 'high_educ_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), 
+                                    ifelse(df_new$covariate == 'high_educ_0y',
+                                    df_new[df_new$covariate=='high_educ_0y',]$avg*sd(data_raw$high_educ_0y)+mean(data_raw$high_educ_0y),
+                                    df_new$avg))))
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# discount_rate_1y	0.1050990433			
+# cpeur2	0.1045182003			
+# eaeur1	0.1028475817			
+# bmi_0y	0.1017877342			
+# iqeur2	0.0981827205			
+# age_0y	0.0841032564			
+# nihtbx_totalcomp_uncorrected_0y	0.0815843539			
+# parent_age_0y	0.0810366579			
+# history_ratio_0y	0.0727245430			
+# high_educ_0y	0.0471876160
+
+var_name <- c('discount_rate_1y', 'cpeur2', 'eaeur1', 'bmi_0y', 'iqeur2',
+              'age_0y', 'nihtbx_totalcomp_uncorrected_0y', 'parent_age_0y', 
+              'history_ratio_0y', 'high_educ_0y')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Delay Discounting","02. Cognitive Performance GPS",
+                  "03. Education Attainment GPS", "04. BMI", "05. IQ GPS", 
+                  "06. Child Age", "07. NIH Toolbox Total Intelligence",
+                  "08. Parent's Age", "09. Family History of Psychiatric Disorders",
+                  "10. Parental Education")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Total score PLEs (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("totalscore_1y_points_40000_nobrain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+```{r ATE No Brain: Distress 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+
+
+####################### ATE: Distress Score PLEs 1 year ###################################
+
+Y <- data[, 'distress_score_pps_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 250,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 2100)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pps_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+```{r Importance No Brain: Distress 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y', 'high_educ_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), 
+                                    ifelse(df_new$covariate == 'high_educ_0y',
+                                    df_new[df_new$covariate=='high_educ_0y',]$avg*sd(data_raw$high_educ_0y)+mean(data_raw$high_educ_0y),
+                                    df_new$avg))))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# cpeur2	0.0943456502			
+# bmi_0y	0.0933669609			
+# discount_rate_1y	0.0924406332			
+# iqeur2	0.0889809470			
+# eaeur1	0.0879245484			
+# parent_age_0y	0.0835364289			
+# age_0y	0.0797530708			
+# nihtbx_totalcomp_uncorrected_0y	0.0795627393			
+# history_ratio_0y	0.0749204513			
+# high_educ_0y	0.0577573538	
+
+var_name <- c('cpeur2', 'bmi_0y', 'discount_rate_1y', 'iqeur2', 'eaeur1',
+              'parent_age_0y', 'age_0y', 'nihtbx_totalcomp_uncorrected_0y', 
+              'history_ratio_0y', 'high_educ_0y')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Cognitive Performance GPS","02. BMI", "03. Delay Discounting",
+                  "04. IQ GPS", "05. Education Attainment GPS", "06. Parent's Age", 
+                    "07. Child Age", "08. NIH Toolbox Total Intelligence", 
+                  "09. Family History of Psychiatric Disorders", "10. Parental Education")
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Distress score PLEs (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressscore_1y_points_40000_nobrain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r ATE No Brain: Total 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Total Score PLEs 2 year ###################################
+
+Y <- data[, 'totalscore_pps_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 4000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 20000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'totalscore_pps_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+```{r Importance No Brain: Total 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y', 'high_educ_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), 
+                                    ifelse(df_new$covariate == 'high_educ_0y',
+                                    df_new[df_new$covariate=='high_educ_0y',]$avg*sd(data_raw$high_educ_0y)+mean(data_raw$high_educ_0y),
+                                    df_new$avg))))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# iqeur2	0.0934684860			
+# discount_rate_1y	0.0919359697			
+# cpeur2	0.0918988244			
+# eaeur1	0.0911733995			
+# bmi_0y	0.0900312594			
+# age_0y	0.0848411063			
+# nihtbx_totalcomp_uncorrected_0y	0.0845596915			
+# parent_age_0y	0.0831450558			
+# history_ratio_0y	0.0825027561			
+# high_educ_0y	0.0636912969		
+
+var_name <- c('iqeur2', 'discount_rate_1y', 'cpeur2', 'eaeur1', 'bmi_0y',
+              'age_0y', 'nihtbx_totalcomp_uncorrected_0y',  
+              'parent_age_0y', 'history_ratio_0y', 'high_educ_0y')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. IQ GPS", "02. Delay Discounting",
+                  "03. Cognitive Performance GPS", "04. Education Attainment GPS", 
+                  "05. BMI", "06. Child Age",  
+                  "07. NIH Toolbox Total Intelligence", "08. Parent's Age", 
+                  "09. Family History of Psychiatric Disorders", "10. Parental Education")
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Total score PLEs (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("totalscore_2y_points_40000_nobrain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+
+
+```{r ATE No Brain: Distress 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress Score PLEs 2 year ###################################
+
+Y <- data[, 'distress_score_pps_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 4000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 1000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pps_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+```{r Importance No Brain: Distress 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y', 'high_educ_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), 
+                                    ifelse(df_new$covariate == 'high_educ_0y',
+                                    df_new[df_new$covariate=='high_educ_0y',]$avg*sd(data_raw$high_educ_0y)+mean(data_raw$high_educ_0y),
+                                    df_new$avg))))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# eaeur1	0.0815942138			
+# discount_rate_1y	0.0809442069			
+# cpeur2	0.0807612540			
+# iqeur2	0.0791155859			
+# bmi_0y	0.0785490662			
+# history_ratio_0y	0.0769943089			
+# nihtbx_totalcomp_uncorrected_0y	0.0724836262			
+# age_0y	0.0713993396			
+# parent_age_0y	0.0691989632			
+# high_educ_0y	0.0597992593	
+
+var_name <- c('eaeur1', 'discount_rate_1y', 'cpeur2', 'iqeur2', 'bmi_0y',
+              'history_ratio_0y', 'nihtbx_totalcomp_uncorrected_0y', 'age_0y', 
+              'parent_age_0y', 'high_educ_0y')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01.Education Attainment GPS", "02. Delay Discounting",
+                  "03. Cognitive Performance GPS", "04. IQ GPS", "05. BMI", 
+                  "06. Family History of Psychiatric Disorders", 
+                  "07. NIH Toolbox Total Intelligence", 
+                  "08. Child Age", "09. Parent's Age", "10. Parental Education")
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Distress score PLEs (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressscore_2y_points_40000_nobrain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r ATE Brain: Total 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Total Score PLEs 1 year ###################################
+
+Y <- data[, 'totalscore_pps_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters =  c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 4000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 5000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'totalscore_pps_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```  
+
+
+
+
+```{r Importance Brain: Total 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+# var_name <- c("adhdeur6","age_0y_z","bmi_0y_z","depmulti","discount_rate_1y_z",
+#            "eaeur1","history_ratio_0y_z","nihtbx_totalcomp_uncorrected_0y_z",
+#            "parent_age_0y_z","smokerauto")
+
+# tfmri_ma_acvn_b_cds_pcelh	0.0645252857			
+# wm.rh.temporalpole._.18	0.0603791049			
+# tfmri_ma_asvn_b_cds_smgrh	0.0477697463			
+# Right.Caudate._.9	0.0477676227			
+# tfmri_ma_arvn_b_cds_pocgerh	0.0471198367			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0382430514			
+# rh_temporalpole_area._.2	0.0349407171			
+# tfmri_ma_acvn_b_cds_pocgerh	0.0336533016			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0320700181			
+# rh_fusiform_volume._.8
+
+var_name <- c('tfmri_ma_acvn_b_cds_pcelh', 'wm.rh.temporalpole._.18', 'tfmri_ma_asvn_b_cds_smgrh',
+              'Right.Caudate._.9', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acmvn_b_scs_cbwmrh',
+              'rh_temporalpole_area._.2', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_prgisrh',
+              'rh_fusiform_volume._.8')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("1. Left Pericalcarine (average beta: loss vs neutral)","2. Right Temporal Pole white matter",
+                    "3. Right Supramarginal (average beta: small loss vs neutral)","4. Right Caudate volume", 
+                  "5. Right Posterior Cingulate (average beta: reward vs neutral)", 
+                  "6. Right Cerebral white matter (average beta: small loss vs neutral)",
+                  "7. Right Temporal Pole area", "8. Right Posterior Cingulate (average beta: loss vs neutral)",
+                  "9. Right Pars Triangularis (average beta: loss vs neutral)", "10. Right Fusiform volume")
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Total score PLEs (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking") + ylab("Average Covariate Values")  
+
+ggsave("totalscore_1y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+
+```{r ATE Brain: Distress 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+
+
+####################### ATE: Distress Score PLEs 1 year ###################################
+
+Y <- data[, 'distress_score_pps_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                tune.parameters =  c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 4000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 20000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pps_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+```{r Importance Brain: Distress 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# tfmri_ma_acvn_b_cds_pcelh	0.0671714193			
+# wm.rh.temporalpole._.18	0.0660395259			
+# tfmri_ma_asvn_b_cds_smgrh	0.0520418856			
+# rh_temporalpole_area._.2	0.0485375023			
+# Right.Caudate._.9	0.0474040980			
+# cpeur2	0.0465033212			
+# tfmri_ma_arvn_b_cds_pocgerh	0.0399882913			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0371307337			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0322606644			
+# bmi_0y
+
+var_name <- c('tfmri_ma_acvn_b_cds_pcelh', 'wm.rh.temporalpole._.18', 'tfmri_ma_asvn_b_cds_smgrh',
+              'rh_temporalpole_area._.2', 'Right.Caudate._.9', 'cpeur2', 'tfmri_ma_arvn_b_cds_pocgerh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh', 'tfmri_ma_acvn_b_cds_prgisrh', 'bmi_0y')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Left Pericalcarine (average beta: loss vs neutral)","02. Right Temporal Pole white matter",
+                    "03. Right Supramarginal (average beta: small loss vs neutral)","04. Right Temporal Pole area",
+                    "05. Right Caudate volume", "06. Cognitive Performance GPS", 
+                    "07. Right Posterior Cingulate (average beta: reward vs neutral)", 
+                  "08. Right Cerebral white matter (average beta: small loss vs neutral)",
+                  "09. Right Pars Triangularis (average beta: loss vs neutral)", "10. BMI")
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Distress score PLEs (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressscore_1y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+```{r ATE Brain: Total 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Total Score PLEs 2 year ###################################
+
+Y <- data[, 'totalscore_pps_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 4000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 20000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'totalscore_pps_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+  
+```
+
+
+```{r Importance Brain: Total 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# 1 tfmri_ma_acmvn_b_scs_cbwmrh	0.0621354631			
+# 2 tfmri_ma_acvn_b_cds_pcelh	0.0492548956			
+# 3 Right.Caudate._.9	0.0477126911			
+# 4 tfmri_ma_acvn_b_cds_pocgerh	0.0428412991			
+# 5 wm.rh.temporalpole._.18	0.0342579254			
+# 6 cpeur2	0.0331363963			
+# 7 rh_isthmuscingulate_area._.2	0.0328625838			
+# 8 tfmri_ma_allvn_b_cds_ffrh	0.0319705144			
+# 9 tfmri_ma_acvn_b_cds_prgisrh	0.0312828156			
+# 10 rh_temporalpole_area._.2	0.0305669004	
+
+
+var_name <- c('tfmri_ma_acmvn_b_scs_cbwmrh', 'tfmri_ma_acvn_b_cds_pcelh', 'Right.Caudate._.9',
+              'tfmri_ma_acvn_b_cds_pocgerh', 'wm.rh.temporalpole._.18', 'cpeur2',
+              'rh_isthmuscingulate_area._.2', 'tfmri_ma_allvn_b_cds_ffrh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'rh_temporalpole_area._.2')
+
+
+reorder_idx <- match(var_imp_list, var_name)
+
+var_name_new <- c("01. Right Cerebral white matter (average beta: small loss vs neutral)",
+                  "02. Left Pericalcarine (average beta: loss vs neutral)",
+                  "03. Right Caudate volume", 
+                  "04. Right Posterior Cingulate (average beta: loss vs neutral)",
+                  "05. Right Temporal Pole white matter", "06. Cognitive Performance GPS", 
+                  "07. Isthmus Cingulate area", 
+                  "08. Right Fusiform (average beta: large loss vs neutral)",
+                  "09. Right Pars Triangularis (average beta: loss vs neutral)", 
+                  "10. Right Temporal Pole area")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Total score PLEs (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("totalscore_2y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+```{r ATE Brain: Distress 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y")
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress Score PLEs 2 year ###################################
+
+Y <- data[, 'distress_score_pps_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 20000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pps_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+```{r Importance Brain: Distress 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# Right.Caudate._.9	0.0734374754			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0611340164			
+# tfmri_ma_asvn_b_cds_smgrh	0.0456601056			
+# tfmri_ma_acvn_b_cds_pocgerh	0.0445666368			
+# history_ratio_0y	0.0426183299			
+# tfmri_ma_acvn_b_cds_pcelh	0.0403553943			
+# discount_rate_1y	0.0322290339			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0306551115			
+# wm.rh.temporalpole._.18	0.0304265891			
+# cpeur2
+
+var_name <- c('Right.Caudate._.9', 'tfmri_ma_acmvn_b_scs_cbwmrh', 'tfmri_ma_asvn_b_cds_smgrh',
+              'tfmri_ma_acvn_b_cds_pocgerh', 'history_ratio_0y', 'tfmri_ma_acvn_b_cds_pcelh', 'discount_rate_1y', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'wm.rh.temporalpole._.18', 'cpeur2')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Right Caudate volume", "02. Right Cerebral white matter (average beta: small loss vs neutral)",
+                  "03. Right Supramarginal (average beta: small loss vs neutral)", 
+                  "04. Right Posterior Cingulate (average beta: loss vs neutral)",
+                  "05. Family History of Psychiatric Disorders", 
+                  "06. Left Pericalcarine (average beta: loss vs neutral)", 
+                  "07. Delay Discounting", 
+                  "08. Right Pars Triangularis (average beta: loss vs neutral)",
+                  "09. Right Temporal Pole white matter", 
+                  "10. Cognitive Performance GPS")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Distress score PLEs (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressscore_2y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+
+```{r ATE Brain: Distress DI 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol',
+      'distress_score_di_1y', 'distress_score_pd_1y', 
+      'distress_score_di_2y', 'distress_score_pd_2y')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
+       'distress_score_di_1y', 'distress_score_pd_1y', 
+       'distress_score_di_2y', 'distress_score_pd_2y')
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress DI 1 year ###################################
+
+Y <- data[, 'distress_score_di_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_di_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+```{r Importance Brain: Distress DI 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# wm.rh.temporalpole._.18	0.0655714862			
+# tfmri_ma_acvn_b_cds_pcelh	0.0573249834			
+# cpeur2	0.0570972162			
+# tfmri_ma_asvn_b_cds_smgrh	0.0498457177			
+# Right.Caudate._.9	0.0498333028			
+# rh_temporalpole_area._.2	0.0424791259			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0364112320			
+# tfmri_ma_arvn_b_cds_pocgerh	0.0308071466			
+# rh_parahippocampal_area._.2	0.0306007325			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0304832427	
+
+var_name <- c('wm.rh.temporalpole._.18', 'tfmri_ma_acvn_b_cds_pcelh', 'cpeur2',
+              'tfmri_ma_asvn_b_cds_smgrh', 'Right.Caudate._.9', 'rh_temporalpole_area._.2', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh', 'tfmri_ma_arvn_b_cds_pocgerh',
+              'rh_parahippocampal_area._.2', 'tfmri_ma_acvn_b_cds_prgisrh')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Right Temporal Pole white matter", 
+                  "02. Left Pericalcarine (average beta: loss vs neutral)",
+                  "03. Cognitive Performance GPS", 
+                  "04. Right Supramarginal (average beta: small loss vs neutral)",
+                  "05. Right Caudate volume", 
+                  "06. Right Temporal Pole area", 
+                  "07. Right Cerebral white matter (average beta: small loss vs neutral)", 
+                  "08. Right Posterior Cingulate (average beta: reward vs neutral)",
+                  "09. Right Parahippocampal area", 
+                  "10. Right Pars Triangularis (average beta: loss vs neutral)")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Delusion-Like Experiences (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressDI_1y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r ATE Brain: Distress PD 1year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol',
+      'distress_score_di_1y', 'distress_score_pd_1y', 
+      'distress_score_di_2y', 'distress_score_pd_2y')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
+       'distress_score_di_1y', 'distress_score_pd_1y', 
+       'distress_score_di_2y', 'distress_score_pd_2y')
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress PD 1 year ###################################
+
+Y <- data[, 'distress_score_pd_1y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest, num.trees.for.weights = 20000)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pd_1y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+```{r Importance Brain: Distress PD 1year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# wm.rh.temporalpole._.18	0.0485306818			
+# rh_temporalpole_area._.2	0.0439331220			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0396108894			
+# tfmri_ma_acvn_b_cds_pcelh	0.0389632839			
+# Right.Caudate._.9	0.0387152939			
+# rh_isthmuscingulate_area._.2	0.0319077939			
+# tfmri_ma_arvn_b_cds_pocgerh	0.0316044530			
+# tfmri_ma_acvn_b_cds_pocgerh	0.0309060120			
+# rh_parahippocampal_area._.2	0.0307377874			
+# cpeur2	0.0303960983	
+
+var_name <- c('wm.rh.temporalpole._.18', 'rh_temporalpole_area._.2',
+              'tfmri_ma_acmvn_b_scs_cbwmrh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'Right.Caudate._.9', 'rh_isthmuscingulate_area._.2',
+              'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pocgerh',
+              'rh_parahippocampal_area._.2', 'cpeur2')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Right Temporal Pole white matter", 
+                  "02. Right Temporal Pole area",
+                  "03. Right Cerebral white matter (average beta: small loss vs neutral)", 
+                  "04. Left Pericalcarine (average beta: loss vs neutral)",
+                  "05. Right Caudate volume", 
+                  "06. Right Isthmus Cingulate area", 
+                  "07. Right Posterior Cingulate (average beta: reward vs neutral)", 
+                  "08. Right Posterior Cingulate (average beta: loss vs neutral)",
+                  "09. Right Parahippocampal area", 
+                  "10. Cognitive Performance GPS")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Hallucination-Like Experiences (1-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressPD_1y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r ATE Brain: Distress DI 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol',
+      'distress_score_di_1y', 'distress_score_pd_1y', 
+      'distress_score_di_2y', 'distress_score_pd_2y')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
+       'distress_score_di_1y', 'distress_score_pd_1y', 
+       'distress_score_di_2y', 'distress_score_pd_2y')
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress DI 2-year ###################################
+
+Y <- data[, 'distress_score_di_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_di_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+```{r Importance Brain: Distress DI 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# Right.Caudate._.9	0.0544930545			
+# tfmri_ma_asvn_b_cds_smgrh	0.0529793071			
+# tfmri_ma_acvn_b_cds_pocgerh	0.0396299203			
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0381045360			
+# history_ratio_0y	0.0364113705			
+# tfmri_ma_alrvn_b_cds_romdfrrh	0.0334594708			
+# tfmri_ma_arvn_b_cds_smglh	0.0321901923			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0308910904			
+# tfmri_ma_asrvn_b_cds_smglh	0.0293119850			
+# tfmri_ma_acvn_b_cds_pcelh	0.0288657264	
+
+var_name <- c('Right.Caudate._.9', 'tfmri_ma_asvn_b_cds_smgrh',
+              'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_acmvn_b_scs_cbwmrh',
+              'history_ratio_0y', 'tfmri_ma_alrvn_b_cds_romdfrrh',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_acvn_b_cds_prgisrh',
+              'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_acvn_b_cds_pcelh')
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Right Caudate volume", 
+                  "02. Right Supramarginal (average beta: small loss vs neutral)",
+                  "03. Right Posterior Cingulate (average beta: loss vs neutral)", 
+                  "04. Right Cerebral white matter (average beta: small loss vs neutral)",
+                  "05. Family History of Psychiatric Disorders", 
+                  "06. Right Rostral Middle Frontal (average beta: large reward vs neutral)", 
+                  "07. Left Supramarginal (average beta: reward vs neutral)", 
+                  "08. Right Pars Triangularis (average beta: loss vs neutral)",
+                  "09. Left Supramarginal (average beta: small reward vs neutral)", 
+                  "10. Left Pericalcarine (average beta: loss vs neutral)")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Delusion-Like Experiences (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressDI_2y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r ATE Brain: Distress PD 2year}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol',
+      'distress_score_di_1y', 'distress_score_pd_1y', 
+      'distress_score_di_2y', 'distress_score_pd_2y')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+# print("Sample Size=")
+# print(nrow(data))
+data_raw = data
+
+#########################Scale Continuous Variables#############################
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(61:459)]<-scale(data.frame(data[, c(61:459)]))
+
+#MID task fMRI
+# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(461:1439)]<-scale(data.frame(data[, c(461:1439)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
+       'distress_score_di_1y', 'distress_score_pd_1y', 
+       'distress_score_di_2y', 'distress_score_pd_2y')
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+#################################Binary Treatment & Covariates######################################
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+# data$sex_0y<-as.factor(data$sex_0y)
+# data$married_0y<-as.factor(data$married_0y)
+# data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+# data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+covariates<-c('discount_rate_1y','age_0y', 'bmi_0y', 'income_0y', 
+                 'high_educ_0y', 'sex_0y_F', 'vol',
+                 'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+                 'parent_identity_0y_2','parent_identity_0y_3', 
+                 'parent_identity_0y_4', 'parent_identity_0y_5',
+                 'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+                 'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+                 'parent_age_0y', 
+                 'cpeur2', 'eaeur1', 'iqeur2',
+                 'nihtbx_totalcomp_uncorrected_0y', 'history_ratio_0y',
+                'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+              'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+              'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+              'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+              'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 'tfmri_ma_acvn_b_cds_pcelh', 
+              'tfmri_ma_acvn_b_cds_prgisrh', 'tfmri_ma_acvn_b_cds_pocgerh', 'tfmri_ma_alrvn_b_cds_postcrh', 
+              'tfmri_ma_alrvn_b_cds_romdfrrh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_asrvn_b_cds_smgrh', 
+              'tfmri_ma_allvn_b_cds_tvtplh', 'tfmri_ma_allvn_b_cds_ffrh', 'tfmri_ma_asvn_b_cds_smgrh', 
+              'tfmri_ma_acmvn_b_scs_cbwmrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+
+####################### ATE: Distress PD 2-year ###################################
+
+Y <- data[, 'distress_score_pd_2y']
+set.seed(123, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+cforest <- instrumental_forest(X, Y, W, Z,
+                               num.trees = 40000,
+                                 tune.parameters = c('sample.fraction', 'mtry', 'min.node.size', 'alpha', 'imbalance.penalty'),
+                                 tune.num.trees = 5000,
+                                 tune.num.reps = 200,
+                                 tune.num.draws = 4000)
+  
+  
+  
+  ############### AIPW Average Treatment Effect ##################
+  aipw.scores<-get_scores(cforest)
+  ate.aipw.est <- mean(aipw.scores)
+  ate.aipw.se <- sd(aipw.scores) / sqrt(n)
+  ate.aipw.tstat <- ate.aipw.est / ate.aipw.se
+  ate.aipw.pvalue <- 2*(1-pnorm(abs(ate.aipw.tstat)))
+  lowci<- ate.aipw.est + -1 * qnorm(0.975) * ate.aipw.se 
+  highci<- ate.aipw.est + 1 * qnorm(0.975) * ate.aipw.se 
+  ate.aipw.results <- as.data.frame(cbind(ate.aipw.est, ate.aipw.se, ate.aipw.tstat, ate.aipw.pvalue, lowci, highci))
+  rownames(ate.aipw.results)<-'distress_score_pd_2y'
+  colnames(ate.aipw.results)<-c("Estimate", "Std.Error", "t", "P-value", "95% LowCI", "95% High CI")
+  print(ate.aipw.results)
+
+  
+    ################### Variable Importance of Heterogeneity #######################
+  
+  var_imp <- round(c(variable_importance(cforest)), 10)
+  names(var_imp) <- covariates
+  sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+  sorted_var_imp<-as.data.frame(sorted_var_imp)
+  setDT(sorted_var_imp, keep.rownames=TRUE)[]
+  print(sorted_var_imp)
+
+```
+
+
+
+
+```{r Importance Brain: Distress PD 2year}
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 5  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 10
+folds <- sort(seq(n) %% num.folds) + 1
+# Retrieve out-of-bag predictions.
+# Predictions for observation in fold k will be computed using 
+# trees that were not trained using observations for that fold.
+
+
+tau.hat <- predict(cforest)$predictions 
+
+# Rank observations *within each fold* into quantiles according to their CATE predictions.
+ranking <- rep(NA, n)
+for (fold in seq(num.folds)) {
+  tau.hat.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+  ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.hat.quantiles, include.lowest=TRUE,labels=seq(num.rankings))
+}
+
+
+
+df <- mapply(function(covariate) {
+      # Looping over covariate names
+      # Compute average covariate value per ranking (with correct standard errors)
+      fmla <- formula(paste0(covariate, "~ 0 + ranking"))
+      ols <- lm(fmla, data=transform(data, ranking=factor(ranking)))
+      ols.res <- coeftest(ols, vcov=vcovHC(ols, "HC2"))
+    
+      # Retrieve results
+      avg <- ols.res[,1]
+      stderr <- ols.res[,2]
+      
+      # Tally up results
+      data.frame(covariate, avg, stderr, ranking=paste0("Q", seq(num.rankings)), 
+                 # Used for coloring
+                 scaling=pnorm((avg - mean(avg))/sd(avg)), 
+                 # We will order based on how much variation is 'explain' by the averages
+                 # relative to the total variation of the covariate in the data
+                 variation=sd(avg) / sd(data[,covariate]),
+                 # String to print in each cell in heatmap below
+                 #labels=paste0(signif(avg, 2), "\n", "(", signif(stderr, 1), ")")
+                 labels= avg)
+}, covariates, SIMPLIFY = FALSE)
+df <- do.call(rbind, df)
+
+
+######Convert Child Age, Parent's Age, BMI to original values#####
+df$var_imp = rep(var_imp, each=5)
+
+df_new = df[df$covariate %in% sorted_var_imp$rn[1:10],]
+df_new = df_new %>% arrange(-var_imp, ranking)
+
+# return some variables into their original values
+rev_norm = c('age_0y', 'parent_age_0y', 'bmi_0y')
+# rev_norm_z = sapply(rev_norm, function(x) paste0(x, '_z'))
+
+df_new$labels= ifelse(df_new$covariate == 'age_0y',
+                      df_new[df_new$covariate=='age_0y',]$avg*sd(data_raw$age_0y)+mean(data_raw$age_0y), 
+                      ifelse(df_new$covariate == 'parent_age_0y',
+                             df_new[df_new$covariate=='parent_age_0y',]$avg*sd(data_raw$parent_age_0y)+mean(data_raw$parent_age_0y), 
+                             ifelse(df_new$covariate == 'bmi_0y',
+                                    df_new[df_new$covariate=='bmi_0y',]$avg*sd(data_raw$bmi_0y)+mean(data_raw$bmi_0y), df_new$avg)))
+
+
+var_imp_list <- sorted_var_imp$rn[1:10]
+
+# tfmri_ma_acmvn_b_scs_cbwmrh	0.0553929311			
+# Right.Caudate._.9	0.0418244943			
+# tfmri_ma_acvn_b_cds_pocgerh	0.0410797644			
+# tfmri_ma_acvn_b_cds_pcelh	0.0392181974			
+# wm.rh.temporalpole._.18	0.0389615168			
+# rh_parahippocampal_volume._.8	0.0379624406			
+# lh_WhiteSurfArea_area._.1	0.0359947539			
+# rh_temporalpole_area._.2	0.0335150461			
+# tfmri_ma_acvn_b_cds_prgisrh	0.0317683880			
+# TotalGrayVol._.9	0.0300574966	
+
+var_name <- c("tfmri_ma_acmvn_b_scs_cbwmrh",	"Right.Caudate._.9",
+              "tfmri_ma_acvn_b_cds_pocgerh", "tfmri_ma_acvn_b_cds_pcelh",
+              "wm.rh.temporalpole._.18", "rh_parahippocampal_volume._.8",
+              "lh_WhiteSurfArea_area._.1", "rh_temporalpole_area._.2", 
+              "tfmri_ma_acvn_b_cds_prgisrh", "TotalGrayVol._.9")
+reorder_idx <- match(var_imp_list, var_name) 
+
+var_name_new <- c("01. Right Cerebral white matter (average beta: small loss vs neutral)", 
+                  "02. Right Caudate volume",
+                  "03. Right Posterior Cingulate (average beta: loss vs neutral)", 
+                  "04. Left Pericalcarine (average beta: loss vs neutral)",
+                  "05. Right Temporal Pole white matter", 
+                  "06. Right Parahippocampal volume", 
+                  "07. Left White Matter Surface area", 
+                  "08. Right Temporal Pole area",
+                  "09. Right Pars Triangularis (average beta: loss vs neutral)", 
+                  "10. Total Grey Matter volume")
+
+
+# reorder variables according to the size of the variable importance (descending)
+var_imp_reorder <- var_name_new[reorder_idx] 
+var_imp_reorder
+
+df_new$covariate = rep(var_imp_reorder, each=5)
+df_new
+
+
+library(ggrepel)
+figure1 = ggplot(df_new, aes(ranking, avg, group=1)) +
+  #geom_point(color='darkblue') +
+   geom_line() + geom_point(size=4) +
+   #geom_text(size=4, aes(ranking, avg, label=round(avg,2)))+
+   geom_text_repel(size=6, aes(ranking, avg, label=round(labels,3)))+
+  facet_wrap(~covariate, nrow=5) + 
+   ggtitle(paste0("Average covariate values within group: Hallucination-Like Experiences (2-year)")) +
+   theme(legend.position = 'none', axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(size=25, face="bold"), 
+        axis.title.x = element_text(size=25, face="bold"),
+        axis.title.y = element_text(size=25, face="bold"),
+        strip.text = element_text(size=25, face="bold"), 
+        plot.title = element_text(size=25, face="bold")) + 
+   xlab("CATE Ranking (Q1~Q5)") + ylab("Average Covariate Values")  
+
+ggsave("distressPD_2y_points_40000_brain.pdf", 
+       figure1, device = "pdf", width = 24, height = 16)
+
+
+```
+
+
+
+
+```{r}
+#################### FDR Correction of P-values ###########################
+p<-c(0.03429801, 0.0223891, 0.04065816, 0.007777675, 0.02432002, 0.001858996, 
+     0.006942293, 0.004641988, 0.00548983, 0.005579269, 0.00615884, 0.0146496, 
+     0.009368802)
+
+p_fdr<-as.data.frame(p.adjust(as.matrix(p), method = "fdr"))
+row.names(p_fdr)<-c("ATE No Brain: DD 1y", "ATE No Brain: Total 1y", "ATE: Distress 1y", "ATE: Total 2y", "ATE: Distress 2y",
+                    "ATE Brain: Total 1y", "ATE Brain: Distress 1y", "ATE Brain: Total 2y", "ATE Brain: Distress 2y", 
+                    "ATE Brain: Distress DI 1y", "ATE Brain: Distress PD 1y", "ATE Brain: Distress DI 2y", "ATE Brain: Distress PD 2y")
+colnames(p_fdr)<-c('P-FDR')
+print(p_fdr)
+
+```
