@@ -27,6 +27,7 @@ Average Treatment Effects using Instrumental Random Forests (grf)
 
 ### Reference
 Wager, S., & Athey, S. (2018). Estimation and Inference of Heterogeneous Treatment Effects using Random Forests. Journal of the American Statistical Association, 113(523), 1228-1242. doi:10.1080/01621459.2017.1319839 
+
 Athey, S., Tibshirani, J., & Wager, S. (2019). Generalized random forests. The Annals of Statistics, 47(2), 1148-1178. doi:10.1214/18-AOS1709 
 
 
