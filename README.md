@@ -9,7 +9,7 @@ All analyses were conducted in R version 4.1.2.
 Variable selection for Polygenic Risk Scores (PRS), Structural MRI, and MID Task fMRI using Boruta
 
 
-## DD IV Regression.Rmd
+## DD IV Regression.R
 Conventional Linear Instrumental Variable regression (IV regression)
 
 
