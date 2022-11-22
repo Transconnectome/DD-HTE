@@ -5,7 +5,7 @@ This contains codes used for [Heterogeneity in the Causal Effects of Neighborhoo
 All analyses were conducted in R version 4.1.2.
 
 
-## DD Var Select
+## DD Var Select.R
 Variable selection for Polygenic Risk Scores (PRS), Structural MRI, and MID Task fMRI using Boruta
 
 
