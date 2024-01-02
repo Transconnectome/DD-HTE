@@ -1,0 +1,325 @@
+------
+Model 1: Demographics+Delay Discounting
+------
+
+```{r Preparation}
+rm(list=ls())
+dd_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain discounting\\Data\\ABCD Delay discounting merged_wide_kNN imputed dataset.csv", header=TRUE)
+
+dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
+      'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
+      'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'distress_score_di_1y', 'distress_score_pd_1y', 'distress_score_di_2y', 'distress_score_pd_2y',
+      'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
+      'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
+      'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
+      'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
+      'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
+      'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
+
+
+smri_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\mor.some.qc.desikan.csv", header=TRUE)
+
+MID_fMRI_data<-read.csv("C:\\Users\\socra\\Desktop\\Brain Discounting\\Data\\ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
+
+MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, interview_date, 
+                                                             interview_age, sex, visit,
+                                                             imgincl_t1w_include, imgincl_t2w_include, imgincl_dmri_include,
+                                                             imgincl_rsfmri_include, imgincl_mid_include, imgincl_nback_include,
+                                                             imgincl_sst_include, tfmri_mid_all_b_tr, tfmri_mid_all_b_numtrs,
+                                                             tfmri_mid_all_b_dof, tfmri_mid_all_b_nvols, tfmri_mid_all_b_subthreshnvols, 
+                                                             tfmri_mid_all_b_meanmotion, tfmri_mid_all_b_maxmotion, 
+                                                             tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
+                                                             tfmri_mid_all_b_maxrot))
+
+dd_s<-dd_data[,dd]
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
+MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
+data<-subset(MERGED2, JB_val_total_1y==1)
+data<-na.omit(data)
+print(paste0("Sample Size = ", nrow(data)))
+
+#Structure MRI
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(65:463)]<-scale(data.frame(data[, c(65:463)]))
+
+#MID task fMRI
+# grep("tfmri_ma_arvn_b_cds_bkslh", colnames(data))
+# grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
+data[, c(464:1443)]<-scale(data.frame(data[, c(464:1443)]))
+
+#Other
+contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
+       "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
+       "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
+       "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
+       'distress_score_di_1y', 'distress_score_pd_1y', 'distress_score_di_2y', 'distress_score_pd_2y')
+
+data[contvar]<-scale(data.frame(data[contvar]))
+
+
+data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
+
+data$sex_0y<-as.factor(data$sex_0y)
+data$married_0y<-as.factor(data$married_0y)
+data$parent_identity_0y<-as.factor(data$parent_identity_0y)
+data$race_ethnicity_0y<-as.factor(data$race_ethnicity_0y)
+
+
+library(fastDummies)
+
+data<-dummy_cols(data, select_columns = c('sex_0y', 'married_0y', 'race_g', 'parent_identity_0y', 'race_ethnicity_0y'))
+site<-as.numeric(factor(data$abcd_site_0y))
+
+library(learnr)
+library(DiagrammeR)
+library(grf)
+library(tidyverse)
+library(broom)
+library(fastDummies)
+library(lmtest)
+library(rpart)
+library(glmnet)
+library(splines)
+library(MASS)
+library(sandwich)
+library(ggplot2)
+library(data.table)
+
+```
+
+
+```{r Run Model}
+y<-'distress_score_pps_1y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y', 'discount_rate_1y')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+################ 5-fold Cross-Validation ################
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+# The argument 'clusters' in the next step will mimick K-fold cross-fitting.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+  
+  # tau.hat_i <- predict(forest_list[[i]])$predictions
+  # aipw.scores_i<-get_scores(forest_list[[i]], num.trees.for.weights = 1000)
+  # tau.hat.res<-cbind(tau.hat.res, data.frame(tau.hat_i))
+  # aipw.scores.res<-cbind(aipw.scores.res, data.frame(aipw.scores_i))
+  
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+## Average Treatment Effects
+ate<-average_treatment_effect(big_rf, num.trees.for.weights = 5000)
+est <- ate['estimate']
+se <- ate['std.err']
+tstat <- est / se
+pvalue <- 2*(1-pnorm(abs(tstat)))
+lowci<- est + -1 * qnorm(0.975) * se
+highci<- est + 1 * qnorm(0.975) * se 
+ate.results <- as.data.frame(cbind(est, se, tstat, pvalue, lowci, highci))
+colnames(ate.results) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(ate.results) <- "Average Treatment Effects"
+ate.results
+
+
+## Test Calibration
+diff_forest<-transpose(data.frame(test_calibration_iv(big_rf)[2,1:4]))
+lowci <- diff_forest[1] + -1 * qnorm(0.975) * diff_forest[2]
+highci <- diff_forest[1] + 1 * qnorm(0.975) * diff_forest[2]
+diff_forest <- cbind(diff_forest, lowci, highci)
+colnames(diff_forest) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(diff_forest) <- "Differential Forest Prediction"
+diff_forest
+
+
+## GATE
+ranking <- rep(NA, n)
+
+for (fold in seq(num.folds)) {
+    tau.quantiles <- quantile(tau.hat[folds == fold], probs = seq(0, 1, by=1/num.rankings))
+    ranking[folds == fold] <- cut(tau.hat[folds == fold], tau.quantiles, 
+                                include.lowest=TRUE, labels=seq(num.rankings)) 
+  }
+
+ols <- lm(aipw.scores ~ 0 + factor(ranking))
+forest.ate <- data.frame(paste0("Q", seq(num.rankings)), coeftest(ols, vcov=vcovHC(ols, "HC2"))[,])
+colnames(forest.ate) <- c("Ranking", "Estimate", "Std.err", "t value", "Pr(>t)")
+rownames(forest.ate) <- NULL # just for display
+
+ate.lowci<- forest.ate$Estimate + -1 * qnorm(0.975) * forest.ate$Std.err 
+ate.highci<- forest.ate$Estimate + 1 * qnorm(0.975) * forest.ate$Std.err
+forest.ate<-cbind(forest.ate, ate.lowci, ate.highci)
+colnames(forest.ate) <- c("Ranking", "Estimate", "Std.err", "t value", "Pr(>t)", "95% Lower CI", "95% Upper CI")
+
+forest.ate
+
+
+## Group Differences
+ols <- lm(aipw.scores ~ 1 + factor(ranking))
+res<-summary(ols)$coefficients[2:10,]
+rows <- paste("Rank", 2:num.rankings, "- Rank 1") # just for display
+rownames(res) <- NULL
+res <- data.frame(rows, res)
+colnames(res) <- c("Ranking", "Estimate", "Std.err", "t value", "Pr(>t)")
+
+gate.lowci<- res$Estimate + -1 * qnorm(0.975) * res$Std.err 
+gate.highci<- res$Estimate + 1 * qnorm(0.975) * res$Std.err
+res<-cbind(res, gate.lowci, gate.highci)
+colnames(res) <- c("Ranking", "Estimate", "Std.err", "t value", "Pr(>t)", "95% Lower CI", "95% Upper CI")
+res
+
+
+## Subset the dataframe for "rank==1" and "rank==5"
+resilient <- data[ranking == 1, ]
+vulnerable <- data[ranking == 10, ]
+
+
+## Associations between covariates & heterogeneity
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          # 'married_0y_2', 
+          'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          # 'race_ethnicity_0y_4',
+          'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y', 'discount_rate_1y')
+
+resilient$binary_group <- 0
+vulnerable$binary_group <- 1
+binary_df <- rbind(resilient, vulnerable)
+
+model <- glm(formula=paste0("binary_group ~", paste0(covariates, collapse="+")), data = binary_df, family = binomial)
+summary(model)
+beta<-as.matrix(round(summary(model)$coefficients[2:22, 1],4))
+se<-as.matrix(round(summary(model)$coefficients[2:22,2],4))
+p<-as.matrix(round(summary(model)$coefficients[2:22,4],4))
+p_fdr<-round((p.adjust(as.matrix(p), method = 'fdr')),4)
+lowci<- beta + -1 * qnorm(0.975) * se 
+highci<- beta + 1 * qnorm(0.975) * se
+res_all<-cbind(beta, se, lowci, highci, p, p_fdr)
+colnames(res_all)<-c("Estimates", "Std.Err", "95% Lower CI", "95% Upper CI", "P-value", "P-FDR")
+rownames(res_all)<-covariates
+res_all
+
+
+model2 <- glm(formula=paste0("ranking ~", paste0(colnames(X), collapse="+")), data = data, family = gaussian)
+summary(model2)
+beta<-as.matrix(round(summary(model2)$coefficients[2:24, 1],4))
+se<-as.matrix(round(summary(model2)$coefficients[2:24,2],4))
+p<-as.matrix(round(summary(model2)$coefficients[2:24,4],4))
+p_fdr<-round((p.adjust(as.matrix(p), method = 'fdr')),4)
+lowci<- beta + -1 * qnorm(0.975) * se 
+highci<- beta + 1 * qnorm(0.975) * se 
+
+res_all2<-cbind(beta, se, lowci, highci, p, p_fdr)
+colnames(res_all2)<-c("Estimates", "Std.Err", "95% Lower CI", "95% Upper CI", "P-value", "P-FDR")
+rownames(res_all2)<-colnames(X)
+res_all2
+
+
+## Variable Importance
+var_imp <- round(c(variable_importance(big_rf)), 10)
+names(var_imp) <- colnames(X)
+sorted_var_imp <- sort(var_imp, decreasing = TRUE)
+sorted_var_imp<-as.data.frame(sorted_var_imp)
+setDT(sorted_var_imp, keep.rownames=TRUE)[]
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(VarImp=sorted_var_imp, Covariates=res_all2, 
+               GATE=forest.ate, GATE_Diff=res, Covariates_logit=res_all, Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("C:\\Users\\socra\\Desktop\\Brain discounting\\GRF Results_Calibration\\", y, "_dd_3.xlsx"))
+
+```
+
+
