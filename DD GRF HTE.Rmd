@@ -815,6 +815,684 @@ library(data.table)
 
 ```
 
+```{r Run Model: Distress PLEs 1year}
+y<-'distress_score_pps_1y'
 
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
+
+
+```{r Run Model: Distress PLEs 2year}
+y<-'distress_score_pps_2y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
+
+```{r Run Model: Delusional PLEs 1year}
+y<-'distress_score_di_1y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
+
+```{r Run Model: Delusional PLEs 2year}
+y<-'distress_score_di_2y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
+
+
+```{r Run Model: Hallucinational PLEs 1year}
+y<-'distress_score_pd_1y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
+
+```{r Run Model: Hallucinational PLEs 2year}
+y<-'distress_score_pd_2y'
+
+covariates<-c('age_0y', 'bmi_0y', 'income_0y', 
+          'high_educ_0y', 'sex_0y_F', 'vol',
+          'married_0y_2', 'married_0y_3', 'married_0y_4', 'married_0y_5', 'married_0y_6',
+          'parent_identity_0y_2','parent_identity_0y_3', 
+          'parent_identity_0y_4', 'parent_identity_0y_5',
+          'race_ethnicity_0y_2', 'race_ethnicity_0y_3', 
+          'race_ethnicity_0y_4', 'race_ethnicity_0y_5',
+          'parent_age_0y', 'history_ratio_0y', 
+          'nihtbx_totalcomp_uncorrected_0y',
+          'cpeur2', 'eaeur1', 'iqeur2',
+          'lh_rostralanteriorcingulate_area._.1', 'lh_WhiteSurfArea_area._.1', 'rh_isthmuscingulate_area._.2',
+          'rh_parahippocampal_area._.2', 'rh_parsopercularis_area._.2', 'rh_temporalpole_area._.2', 
+          'rh_fusiform_volume._.8', 'rh_parahippocampal_volume._.8', 'rh_parsopercularis_volume._.8', 
+          'Right.Caudate._.9', 'TotalGrayVol._.9', 'wm.rh.temporalpole._.18',
+          'tfmri_ma_arvn_b_cds_preclh', 'tfmri_ma_arvn_b_cds_smglh', 'tfmri_ma_arvn_b_cds_pocgerh', 
+          'tfmri_ma_alrvn_b_cds_tvtplh', 'tfmri_ma_asrvn_b_cds_smglh', 'tfmri_ma_allvn_b_cds_sutplh', 
+          'tfmri_ma_asvn_b_cds_insularh', 'tfmri_ma_acdn_b_scs_tplh', 'tfmri_ma_acmvn_b_scs_vndcrh')
+
+W = data$rh_adi_bi_0y
+X = data[, covariates]
+Z = data$section8_0y
+n = nrow(data)
+
+Y <- data[, y]
+
+
+# Number of rankings that the predictions will be ranking on 
+# (e.g., 2 for above/below median estimated CATE, 5 for estimated CATE quintiles, etc.)
+num.rankings <- 10  
+
+# Prepare for data.splitting
+# Assign a fold number to each observation.
+num.folds <- 5
+folds <- sort(seq(n) %% num.folds) + 1
+
+aipw.scores.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+tau.hat.res<-data.frame(matrix(NA, nrow = n, ncol = 0))
+
+forest_list <- vector("list", length = 100)
+
+for (i in 1:100) {
+  set.seed(i, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  forest_list[[i]] <- instrumental_forest(X, Y, W, Z,
+                              num.trees = 5000,
+                              clusters = site,
+                              tune.parameters = c('sample.fraction', 'mtry', 'min.node.size',
+                                                   'alpha', 'imbalance.penalty'),
+                              seed = i)
+    
+  print(paste0("Number of Iterations : ", i))
+  
+  }
+
+
+## Merge Forests
+big_rf <- merge_forests(forest_list)
+best_linear_projection(big_rf, X)
+tau.hat <- predict(big_rf)$predictions
+aipw.scores<-get_scores(big_rf, num.trees.for.weights = 5000)
+
+hist(big_rf$W.hat, main="Histogram of Estimated Propensity Scores", xlab=paste0("Propensity Scores for ", y))
+summary(big_rf$W.hat)
+
+```
+
+```{r Results}
+rm(list=c('dd_s', 'dd_data', 'MID_fMRI_data', 'forest_list'))
+
+
+
+## Monotonicity Test
+pairs_to_compare <- matrix(c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10), ncol = 2)
+monotone<-pairwise.t.test(aipw.scores, factor(ranking), pool.sd = FALSE, p.adjust.method = "none", paired = FALSE, subset = pairs_to_compare, alternative = "less")
+p<-c(monotone$p.value[1,1], monotone$p.value[2,2], monotone$p.value[3,3], monotone$p.value[4,4], monotone$p.value[5,5], monotone$p.value[6,6], monotone$p.value[7,7], monotone$p.value[8,8], monotone$p.value[9,9])
+p_fdr<-round((p.adjust(p, method = 'fdr')),4)
+monotone_test<-as.data.frame(p_fdr)
+row.names(monotone_test)<-c("Rank 1 vs Rank 2", "Rank 2 vs Rank 3", "Rank 3 vs Rank 4", "Rank 4 vs Rank 5", 
+                            "Rank 5 vs Rank 6", "Rank 6 vs Rank 7", "Rank 7 vs Rank 8", "Rank 8 vs Rank 9", 
+                            "Rank 9 vs Rank 10")
+monotone_test
+
+
+## Alternative Hypothesis Test
+subgroup <- ifelse(ranking == 1, "Q1", "Qrest")
+alt <- lm(aipw.scores ~ 1 + factor(subgroup))
+lowci <- summary(alt)$coefficients[2,1] + -1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+highci <- summary(alt)$coefficients[2,1] + 1 * qnorm(0.975) * summary(alt)$coefficients[2,2]
+alt_test <- cbind(transpose(data.frame(summary(alt)$coefficients[2,1:4])), lowci, highci)
+colnames(alt_test) <- c("Estimate", "Std.err", "t value", "Pr(>t)", "95% LowCI", "95% High CI")
+rownames(alt_test) <- "Alternative Hypothesis Test"
+alt_test
+
+
+# Perform one-way ANOVA
+anova_result <- aov(aipw.scores ~ factor(ranking))
+# Print the ANOVA summary
+print(summary(anova_result))
+anova_res<-data.frame(summary(anova_result)[[1]]$'F value'[1], summary(anova_result)[[1]]$'Pr(>F)'[1])
+colnames(anova_res) <- c("F value", "Pr(>F)")
+rownames(anova_res) <- "ANOVA Test of Heterogeneity"
+
+
+## Export to Excel
+colnames(sorted_var_imp)<-c("Variables", paste0("Importance_", y))
+list_res<-list(Monotonicity=monotone_test, 
+               Alternative=alt_test, ANOVA=anova_res)
+openxlsx::write.xlsx(list_res, rowNames=TRUE, paste0("GRF Results_HTE\\", y, "_gpsbrain.xlsx"))
+
+```
 
 
