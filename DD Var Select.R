@@ -12,18 +12,17 @@ dd_data<-read.csv("ABCD Delay discounting merged_wide_kNN imputed dataset.csv", 
 dd<-c('subjectkey', 'sex_0y', 'married_0y', 'income_0y', 'age_0y', 'race_g', 'race_ethnicity_0y', 'high_educ_0y', 'bmi_0y',
       'history_ratio_0y', 'abcd_site_0y', 'discount_rate_1y',
       'totalscore_pps_1y', 'totalscore_pps_2y', 'distress_score_pps_1y', 'distress_score_pps_2y',
+      'distress_score_di_1y', 'distress_score_pd_1y', 'distress_score_di_2y', 'distress_score_pd_2y',
       'section8_0y', 'rh_adi_perc1_0y', 'parent_age_0y', 'parent_identity_0y', 
       'JB_val_total_1y', 'nihtbx_totalcomp_uncorrected_0y',
       'cpeur2', 'eaeur1', 'depeur4', 'mddeur6', 'depmulti', 'bmieur4', 'bmimulti', 'iqeur2', 'insomniaeur6', 'snoringeur1',
       'happieur4', 'ghappieur2', 'ghappimeaneur1', 'ghappihealth6', 'alcdep_eurauto', 'alcdep_afrauto', 'alcdep_metaauto',
       'asdauto', 'aspauto', 'bipauto', 'cannabisauto', 'crossauto', 'drinkauto', 'edauto', 'neuroticismauto', 'ocdauto',
       'risk4pcauto', 'risktolauto', 'scz_eurauto', 'scz_easauto', 'scz_metaauto', 'smokerauto', 'worryauto', 'anxietyauto',
-      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol',
-      'distress_score_di_1y', 'distress_score_pd_1y', 
-      'distress_score_di_2y', 'distress_score_pd_2y')
+      'ptsdeur4', 'ptsdmeta6', 'adhdeur6', 'vol')
 
 
-smri_data<-read.csv("ABCD sMRI Desikan_all_baseline.csv", header=TRUE)
+smri_data<-read.csv("mor.some.qc.desikan.csv", header=TRUE)
 
 MID_fMRI_data<-read.csv("ABCD MID task fMRI Desikan_all_baseline.csv", header=TRUE)
 
@@ -37,60 +36,34 @@ MID_fMRI_data<-subset(data.frame(MID_fMRI_data), select = -c(eventname, intervie
                                                              tfmri_mid_all_b_meantrans, tfmri_mid_all_b_maxtrans, tfmri_mid_all_b_meanrot,
                                                              tfmri_mid_all_b_maxrot))
 
-
-# na.test <-  function (x) {
-#   w <- sapply(x, function(x)all(is.na(x)))
-#   if (any(w)) {
-#     stop(paste("All NA in columns", paste(which(w), collapse=", ")))
-#   }
-# }
-# na.test(smri_data)
-
-sMRI_data<-subset(data.frame(smri_data), select = -c(interview_date, interview_age, sex, eventname, 
-                                                     visit, imgincl_t1w_include, imgincl_t2w_include, 
-                                                     imgincl_dmri_include, imgincl_rsfmri_include, 
-                                                     imgincl_mid_include, imgincl_nback_include, 
-                                                     imgincl_sst_include, smri_visitid, smri_vol_scs_lesionlh, 
-                                                     smri_vol_scs_lesionrh, smri_t1w_scs_lesionlh, 
-                                                     smri_t1w_scs_lesionrh, smri_t1w_scs_wmhintlh, 
-                                                     smri_t1w_scs_wmhintrh, smri_t2w_scs_lesionlh, 
-                                                     smri_t2w_scs_lesionrh, smri_t2w_scs_wmhintlh, 
-                                                     smri_t2w_scs_wmhintrh, smri_vol_scs_wmhintlh, 
-                                                     smri_vol_scs_wmhintrh))
-
-
 dd_s<-dd_data[,dd]
-MERGED1<-merge(dd_s, sMRI_data, by='subjectkey')
+MERGED1<-merge(dd_s, smri_data, by='subjectkey')
 MERGED2<-merge(MERGED1, MID_fMRI_data, by='subjectkey')
 data<-subset(MERGED2, JB_val_total_1y==1)
 data<-na.omit(data)
-print("Sample Size=")
-print(nrow(data))
+print(paste0("Sample Size = ", nrow(data)))
 
+rm(dd_data, dd_s, MERGED1, MERGED2, MID_fMRI_data, smri_data)
 
-#########################Scale Continuous Variables#############################
 #Structure MRI
-# grep('smri_thick_cdk_banksstslh', colnames(data))
-# grep('smri_t2w_scs_ccat', colnames(data))
-data[, c(61:1244)]<-scale(data.frame(data[, c(61:1244)]))
+# grep('lh_bankssts_area._.1', colnames(data))
+# grep('CerebralWhiteMatterVol._.18', colnames(data))
+data[, c(65:463)]<-scale(data.frame(data[, c(65:463)]))
 
 #MID task fMRI
-# grep('tfmri_ma_arvn_b_cds_clatcgelh', colnames(data))
+# grep("tfmri_ma_arvn_b_cds_bkslh", colnames(data))
 # grep('tfmri_ma_alvsl_b_scs_vtdcrh', colnames(data))
-data[, c(1246:2224)]<-scale(data.frame(data[, c(1246:2224)]))
+data[, c(464:1443)]<-scale(data.frame(data[, c(464:1443)]))
 
 #Other
 contvar<-c("age_0y", "bmi_0y", "history_ratio_0y", 
        "income_0y", "high_educ_0y", "parent_age_0y", "vol", "rh_adi_perc1_0y",
        "discount_rate_1y", "totalscore_pps_1y", "totalscore_pps_2y", 
        "distress_score_pps_1y", "distress_score_pps_2y", "nihtbx_totalcomp_uncorrected_0y",
-       'distress_score_di_1y', 'distress_score_pd_1y', 
-       'distress_score_di_2y', 'distress_score_pd_2y')
+       'distress_score_di_1y', 'distress_score_pd_1y', 'distress_score_di_2y', 'distress_score_pd_2y')
 
 data[contvar]<-scale(data.frame(data[contvar]))
 
-
-#################################Binary Treatment & Covariates######################################
 
 data$rh_adi_bi_0y = ifelse(data$rh_adi_perc1_0y >= mean(data$rh_adi_perc1_0y), 1, 0)
 
