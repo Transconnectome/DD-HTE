@@ -1,7 +1,7 @@
 # DD-HTE
 
 ## Description
-This contains codes used for [Individual Differences in the Effects of Neighborhood Socioeconomic Deprivation on Economic Decision Making and Psychotic Risk in Children].
+This contains codes used for [Quasi-Experimental Analysis Reveals Neuro-Genetic Susceptibility to Neighborhood Socioeconomic Adversity in Children’s Psychotic-Like Experiences].
 All analyses were conducted in R version 4.1.2.
 
 
